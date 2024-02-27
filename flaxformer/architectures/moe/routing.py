@@ -26,6 +26,7 @@ from flaxformer.components import dense
 from flaxformer.types import Array
 from flaxformer.types import DType
 from flaxformer.types import Initializer
+from absl import logging
 
 RouterOutput = Any
 
@@ -579,7 +580,7 @@ class TokensChooseMaskedRouter(MaskedRouter):
       router_probs *= gate_mask
 
     auxiliary_loss = _load_balancing_loss(router_probs, expert_index)
-
+    logging.info(f'self.batch_prioritized_routing: {self.batch_prioritized_routing}')
     if self.batch_prioritized_routing:
       # Sort tokens according to their routing probability per group, so that
       # the highest probability tokens are routed first.
@@ -615,7 +616,7 @@ class TokensChooseMaskedRouter(MaskedRouter):
     # is its targeted expert.
     # Shape: [num_groups, tokens_per_group, num_experts].
     token_priority = jnp.max(token_priority, axis=2)
-
+    # false
     if self.batch_prioritized_routing:
       # Place token priorities in original ordering of tokens.
       inv_permutation = jnp.argsort(permutation, axis=-1)

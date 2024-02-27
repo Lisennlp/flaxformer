@@ -150,11 +150,11 @@ class MoeLayer(nn.Module):
       ValueError if an unrecognized dispatch algorithm is given.
     """
     original_batch_size, original_seq_length, *hidden_dims = inputs.shape
-    print(f'inputs.shape: {inputs.shape}')
+    logging.info(f'inputs.shape: {inputs.shape}')
     padded_inputs = _maybe_pad(
         inputs, self.num_experts, self.num_expert_replicas
     )
-    print(f'padded_inputs.shape: {padded_inputs.shape}')
+    logging.info(f'padded_inputs.shape: {padded_inputs.shape}')
     padded_batch_size, padded_seq_length, *_ = padded_inputs.shape
 
     num_tokens = padded_batch_size * padded_seq_length
@@ -166,9 +166,9 @@ class MoeLayer(nn.Module):
         self.num_expert_replicas,
         self.strict_group_size,
     )
-    print(f'self.num_experts: {self.num_experts} self.strict_group_size: {self.strict_group_size}')
+    logging.info(f'self.num_experts: {self.num_experts} self.strict_group_size: {self.strict_group_size}')
     # 专家的数量
-    print(f'num_groups: {num_groups}')
+    logging.info(f'num_groups: {num_groups}')
     tokens_per_group = num_tokens // num_groups
 
     if enable_dropout:  # Training
@@ -185,12 +185,14 @@ class MoeLayer(nn.Module):
     grouped_inputs = jnp.reshape(
         padded_inputs, (num_groups, tokens_per_group, *hidden_dims)
     )
+    # 将token维度shard到  dp, fsdp, mp
+    # 8 * 2048 * 2048 
     grouped_inputs = flax_partitioning.with_sharding_constraint(
         grouped_inputs, ('batch', 'length', *self.input_hidden_dims_axes)
     )
 
     if isinstance(self.router, routing.ScatterRouter):
-      print(f'self.router0: {self.router}')
+      logging.info(f'self.router0: {self.router}')
       outputs = self._scatter_to_experts(
           grouped_inputs,
           enable_dropout,
@@ -200,7 +202,8 @@ class MoeLayer(nn.Module):
           prefill_lengths=prefill_lengths,
       )
     elif isinstance(self.router, routing.MaskedRouter):
-      print(f'self.router1: {self.router}')
+      # lsp
+      logging.info(f'self.router1: {self.router}')
       outputs = self._mask_and_dispatch_to_experts(
           grouped_inputs,
           enable_dropout,
@@ -495,7 +498,7 @@ class MoeLayer(nn.Module):
     """
     num_groups, num_experts, capacity, *hidden_dims = inputs.shape
     inputs_dtype = inputs.dtype
-    print(f'inputs00: {inputs.shape}')
+    logging.info(f'inputs00: {inputs.shape}')
     inputs = jax.lax.convert_element_type(inputs, self.dtype)
 
     # Send examples to their target devices.
@@ -508,7 +511,7 @@ class MoeLayer(nn.Module):
         inputs, ('batch', 'unmodeled', 'length', *self.input_hidden_dims_axes)
     )
 
-    print(f'inputs11: {inputs.shape}')
+    logging.info(f'inputs11: {inputs.shape}')
     if self.num_expert_partitions != num_experts:
       # Explicitly extract dimension of size self.num_expert_partitions, along
       # which to partition experts.
@@ -522,8 +525,8 @@ class MoeLayer(nn.Module):
       )
       inputs = jnp.swapaxes(inputs, 1, 2)
 
-    print(f'inputs22: {inputs.shape}')
-    print(f'self.num_expert_partitions: {self.num_expert_partitions}')
+    logging.info(f'inputs22: {inputs.shape}')
+    logging.info(f'self.num_expert_partitions: {self.num_expert_partitions}')
     # Induce all-to-alls:
     # E_ed ** H_m --> E_ed ** H_m,
     # where E is the number of experts and H is the hidden dimension. e, d, and
@@ -535,7 +538,7 @@ class MoeLayer(nn.Module):
         capacity,
         *hidden_dims,
     )
-    print(f'inputs33: {inputs.shape}')
+    logging.info(f'inputs33: {inputs.shape}')
     inputs = flax_partitioning.with_sharding_constraint(
         inputs,
         (
@@ -547,7 +550,7 @@ class MoeLayer(nn.Module):
         ),
     )
     inputs = jnp.swapaxes(inputs, 0, 2)
-    print(f'inputs44: {inputs.shape}')
+    logging.info(f'inputs44: {inputs.shape}')
     inputs = flax_partitioning.with_sharding_constraint(
         inputs,
         (
@@ -560,7 +563,7 @@ class MoeLayer(nn.Module):
     )
 
     inputs = inputs.reshape(num_experts, num_groups * capacity, *hidden_dims)
-    print(f'inputs55: {inputs.shape}')
+    logging.info(f'inputs55: {inputs.shape}')
     # Perform all-gather here along hidden dimnension (H) axis:
     # E_ed ** H_m --> E_ed ** H.
     inputs = flax_partitioning.with_sharding_constraint(
@@ -591,9 +594,9 @@ class MoeLayer(nn.Module):
       return self._filter_inputs(
           mapped_expert, expert_inputs, enable_dropout=enable_dropout, **kwargs
       )
-    print(f'inputs66: {inputs.shape}')
+    logging.info(f'inputs66: {inputs.shape}')
     outputs = layer_fn(self.expert, inputs)
-    print(f'outputs1: {outputs.shape}')
+    logging.info(f'outputs1: {outputs.shape}')
 
     # Send examples back to their original devices.
     output_dims = outputs.shape[2:]
